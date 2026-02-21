@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "start:prod": "NODE_ENV=production node dist/server.js",
     "db:setup": "psql $DATABASE_URL -f schema.sql",
     "test": "jest",
     "test:watch": "jest --watch",
