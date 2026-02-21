@@ -210,31 +210,57 @@ function createApp(): express.Application {
  * Start the server
  */
 async function startServer(): Promise<void> {
-  // Setup global error handlers for uncaught exceptions and rejections
   setupUncaughtExceptionHandler();
   setupUnhandledRejectionHandler();
 
+  // Bind to PORT immediately so Railway's healthcheck can reach /health
+  // before config validation and DB connection run.
+  const app = createApp();
+  const server = app.listen(config.port, () => {
+    console.log(`Server listening on port ${config.port}`);
+  });
+
+  // Graceful shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`\n${signal} received. Starting graceful shutdown...`);
+
+    server.close(async () => {
+      console.log('HTTP server closed');
+
+      try {
+        await closeDatabaseConnection();
+        console.log('✓ Graceful shutdown completed');
+        process.exit(0);
+      } catch (error) {
+        console.error('Error during shutdown:', error);
+        process.exit(1);
+      }
+    });
+
+    setTimeout(() => {
+      console.error('Forced shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // Validate config and connect to DB after the server is already listening.
+  // If either fails, the error is logged clearly before the process exits.
   try {
-    // Validate configuration first
     console.log('Validating configuration...');
     validateConfig();
 
-    // Test database connection
     console.log('Testing database connection...');
     await testDatabaseConnection();
 
-    // Create Express app
-    const app = createApp();
-
-    // Start listening
-    const server = app.listen(config.port, () => {
-      console.log(`
+    console.log(`
 ========================================
-🚀 OAuth Login API Server
+OAuth Login API Server
 ========================================
 Environment: ${config.nodeEnv}
-Port: ${config.port}
-URL: http://localhost:${config.port}
+Port:        ${config.port}
 ========================================
 Endpoints:
   GET  /health
@@ -245,40 +271,10 @@ Endpoints:
   GET  /auth/me
   POST /auth/logout
 ========================================
-      `);
-    });
-
-    // Graceful shutdown
-    const shutdown = async (signal: string) => {
-      console.log(`\n${signal} received. Starting graceful shutdown...`);
-
-      server.close(async () => {
-        console.log('HTTP server closed');
-
-        try {
-          await closeDatabaseConnection();
-          console.log('✓ Graceful shutdown completed');
-          process.exit(0);
-        } catch (error) {
-          console.error('Error during shutdown:', error);
-          process.exit(1);
-        }
-      });
-
-      // Force shutdown after 10 seconds
-      setTimeout(() => {
-        console.error('Forced shutdown after timeout');
-        process.exit(1);
-      }, 10000);
-    };
-
-    // Listen for termination signals
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-    process.on('SIGINT', () => shutdown('SIGINT'));
-
+    `);
   } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
+    console.error('Failed to initialize server:', error);
+    server.close(() => process.exit(1));
   }
 }
 
